@@ -4,6 +4,7 @@ import (
 	"ComicFileTools/src/config"
 	"ComicFileTools/src/tools"
 	"fmt"
+	"io"
 	"io/fs"
 	"io/ioutil"
 	"os"
@@ -12,6 +13,7 @@ import (
 )
 
 type context struct {
+	fileOpMod    fileOpMod
 	meta         *MetaGetter
 	gMap         map[string]string
 	successCount int
@@ -31,15 +33,25 @@ func (c *context) error() {
 	c.errorCount++
 }
 
+type fileOpMod int
+
+const (
+	move fileOpMod = 1
+	copy fileOpMod = 2
+)
+
 func main() {
 	// mod
 	switch config.Conf.RunMod {
 	case config.Test:
 		fmt.Printf("[%v]\n", strings.ToUpper(string(config.Test)))
 		ExecuteTest()
-	case config.Run:
-		fmt.Printf("[%v]\n", strings.ToUpper(string(config.Run)))
-		ExecuteRun()
+	case config.Move:
+		fmt.Printf("[%v]\n", strings.ToUpper(string(config.Move)))
+		ExecuteRun(move)
+	case config.Copy:
+		fmt.Printf("[%v]\n", strings.ToUpper(string(config.Copy)))
+		ExecuteRun(copy)
 	}
 }
 
@@ -55,11 +67,12 @@ func ExecuteTest() {
 	fmt.Printf("name: %v\n", name)
 }
 
-func ExecuteRun() {
+func ExecuteRun(mod fileOpMod) {
 	// context
 	c := &context{
-		meta: NewMetaGetter(config.Conf.Pattern),
-		gMap: make(map[string]string),
+		fileOpMod: mod,
+		meta:      NewMetaGetter(config.Conf.Pattern),
+		gMap:      make(map[string]string),
 	}
 
 	// process
@@ -92,6 +105,7 @@ func processDir(c *context, currentDir string) {
 }
 
 func processFile(c *context, currentDir string, f fs.FileInfo) {
+	// extract meta
 	fn := f.Name()
 	group, name, err := c.meta.Match(fn)
 	if err != nil {
@@ -117,12 +131,86 @@ func processFile(c *context, currentDir string, f fs.FileInfo) {
 
 	oldPath := path.Join(currentDir, fn)
 	newPath := path.Join(gDir, name)
-	if err = os.Rename(oldPath, newPath); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[error] move file '%v' to '%v' error: %v\n", oldPath, newPath, err)
+
+	if c.fileOpMod == move {
+		moveFile(c, oldPath, newPath)
+	}
+
+	if c.fileOpMod == copy {
+		copyFile(c, oldPath, newPath)
+	}
+}
+
+func moveFile(c *context, s string, d string) {
+	// move mod
+	var dstEx bool
+	var err error
+	if dstEx, err = tools.FileExists(d); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[error] check target file error: '%v', error: %v\n", d, err)
+		c.error()
+		return
+	}
+	if dstEx {
+		_, _ = fmt.Fprintf(os.Stderr, "[warning] file already exists, skip: '%v'\n", d)
+		c.skip()
+		return
+	}
+
+	if err := os.Rename(s, d); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[error] move file '%v' to '%v' error: %v\n", s, d, err)
 		c.error()
 		return
 	}
 
-	fmt.Printf("[success] move file '%v' to '%v'\n", oldPath, newPath)
+	fmt.Printf("[success] move file '%v' to '%v' done\n", s, d)
+	c.success()
+}
+
+func copyFile(c *context, s string, d string) {
+	// copy mod
+	var src *os.File
+	var dst *os.File
+	var err error
+
+	// prepare source file
+	if src, err = os.Open(s); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[error] open source file error: '%v', error: %v\n", s, err)
+		c.error()
+		return
+	}
+	defer func(src *os.File) {
+		_ = src.Close()
+	}(src)
+
+	// prepare dest file
+	var dstEx bool
+	if dstEx, err = tools.FileExists(d); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[error] check new file error: '%v', error: %v\n", d, err)
+		c.error()
+		return
+	}
+	if dstEx {
+		_, _ = fmt.Fprintf(os.Stderr, "[warning] file already exists, skip: '%v'\n", d)
+		c.skip()
+		return
+	}
+	if dst, err = os.Create(d); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[error] create new file error: '%v', error: %v\n", d, err)
+		c.error()
+		return
+	}
+	defer func(dst *os.File) {
+		_ = dst.Close()
+	}(dst)
+
+	// copy
+	var written int64
+	if written, err = io.Copy(dst, src); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[error] copy file '%v' to '%v' error: %v\n", s, d, err)
+		c.error()
+		return
+	}
+
+	fmt.Printf("[success] copy file '%v' to '%v' done, %v bytes copied\n", s, d, written)
 	c.success()
 }

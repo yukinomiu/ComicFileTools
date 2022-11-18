@@ -30,11 +30,12 @@ func (c *Config) Print() {
 
 const (
 	Test = RunMod("test")
-	Run  = RunMod("run")
+	Move = RunMod("move")
+	Copy = RunMod("copy")
 )
 
 var Conf = &Config{}
-var ValidMods = []RunMod{Test, Run}
+var ValidMods = []RunMod{Test, Move, Copy}
 
 func validateTestConf() {
 	// pattern
@@ -119,7 +120,9 @@ func init() {
 	switch Conf.RunMod {
 	case Test:
 		validateTestConf()
-	case Run:
+	case Move:
+		fallthrough
+	case Copy:
 		validateRunConf()
 	}
 

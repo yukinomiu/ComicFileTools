@@ -10,4 +10,3 @@ function build() {
 cd $mainDir
 build darwin amd64 $outDir
 build windows amd64 $outDir
-
